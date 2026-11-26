@@ -17,6 +17,8 @@
 #include <TargetConditionals.h>
 #if TARGET_OS_IPHONE
 #include <os/proc.h>
+#include <mach/mach.h>
+#include <mach/arm/thread_status.h>
 #endif
 
 #include "husk-tl-bionic.h"
@@ -161,6 +163,49 @@ static void guest_exit(int status)
     pthread_exit(NULL);
 }
 
+#if TARGET_OS_IPHONE && defined(__arm64__)
+static void stall_address(char *out, size_t size, uintptr_t address)
+{
+    Dl_info info;
+    if (dladdr((void *)address, &info) && info.dli_fname && info.dli_fbase) {
+        const char *name = strrchr(info.dli_fname, '/');
+        snprintf(out, size, "%s+%#lx (%s)", name ? name + 1 : info.dli_fname,
+                 (unsigned long)(address - (uintptr_t)info.dli_fbase),
+                 info.dli_sname ? info.dli_sname : "?");
+    } else {
+        where(out, size, address);
+    }
+}
+
+static void log_stall_threads(unsigned long frames)
+{
+    thread_act_array_t threads;
+    mach_msg_type_number_t count;
+    kern_return_t result = task_threads(mach_task_self(), &threads, &count);
+    tl_log_line("unity stall: %lu frames, task_threads=%d", frames, result);
+    if (result != KERN_SUCCESS) return;
+
+    for (mach_msg_type_number_t i = 0; i < count; i++) {
+        char name[64] = "";
+        pthread_t thread = pthread_from_mach_thread_np(threads[i]);
+        if (thread) pthread_getname_np(thread, name, sizeof(name));
+        arm_thread_state64_t registers;
+        mach_msg_type_number_t words = ARM_THREAD_STATE64_COUNT;
+        result = thread_get_state(threads[i], ARM_THREAD_STATE64, (thread_state_t)&registers, &words);
+        if (result == KERN_SUCCESS) {
+            char pc[256], lr[256];
+            stall_address(pc, sizeof(pc), arm_thread_state64_get_pc(registers));
+            stall_address(lr, sizeof(lr), arm_thread_state64_get_lr(registers));
+            tl_log_line("unity stall: thread %u %s pc=%s lr=%s", threads[i], name, pc, lr);
+        } else {
+            tl_log_line("unity stall: thread %u %s state unavailable (%d)", threads[i], name, result);
+        }
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    }
+    vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(*threads));
+}
+#endif
+
 /* Says every few seconds that the engine is alive, and how much memory the phone says is left: a silent death
  * leaves nothing else to tell a frozen game from a killed one, or a jetsam kill from a crash. */
 static void *heartbeat_thread(void *arg)
@@ -168,6 +213,12 @@ static void *heartbeat_thread(void *arg)
     (void)arg;
     pthread_setname_np("husk-unity-hb");
     unsigned long last = 0;
+#if TARGET_OS_IPHONE && defined(__arm64__)
+    const bool diagnose = A.engine == ENGINE_JAVA
+        && strcmp(A.package, "com.IncontinentCell.MyDystopianRobotGirlfriend") == 0;
+    time_t last_frame = 0;
+    unsigned samples = 0;
+#endif
     for (int tick = 0;; tick++) {
         if (tick < 40) usleep(500000); else sleep(3);          /* twice a second for the first twenty seconds */
         unsigned long f = engine_frames();
@@ -177,6 +228,16 @@ static void *heartbeat_thread(void *arg)
                     f, f - last, os_proc_available_memory() >> 20, va / 1073741824.0, guest_va / 1073741824.0);
 #else
         tl_log_line("unity: alive: %lu frames (+%lu)", f, f - last);
+#endif
+#if TARGET_OS_IPHONE && defined(__arm64__)
+        if (diagnose && f && samples < 2) {
+            time_t now = time(NULL);
+            if (f != last) last_frame = now;
+            if (now - last_frame >= (samples + 1) * 8) {
+                log_stall_threads(f);
+                samples++;
+            }
+        }
 #endif
         last = f;
         { extern volatile struct { uint64_t count, x21, impl, mask; } tl_va_clobber;
