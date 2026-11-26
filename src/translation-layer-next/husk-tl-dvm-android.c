@@ -1352,11 +1352,16 @@ static void unity_command_line_setup(void)
     u_native_pause = NULL; u_native_resume = NULL; u_native_focus = NULL;
     __atomic_store_n(&tl_jni_native_wrap, unity ? unity_native_wrap : NULL, __ATOMIC_RELEASE);
     if (!unity) return;
-    bool sys = force ? atoi(force) != 0 : libunity_has_mimalloc();
+    bool allocator_test = strcmp(A.pkg, "com.IncontinentCell.MyDystopianRobotGirlfriend") == 0;
+    bool sys = force ? atoi(force) != 0 : allocator_test || libunity_has_mimalloc();
     snprintf(UC.line, sizeof(UC.line), "%s%s%s", sys ? "-systemallocator" : "", sys && extra && extra[0] ? " " : "", extra ? extra : "");
     if (!UC.line[0]) { tl_log_line("unity: no mimalloc in this engine: its own allocators"); return; }
-    if (sys) tl_log_line("unity: %s: -systemallocator, malloc for the engine's memory (under Husk mimalloc takes every thread for "
-                         "one, and hands out memory still in use)", force ? "TL_UNITY_SYSTEM_ALLOCATOR" : "mimalloc in this engine");
+    if (sys) {
+        const char *reason = "mimalloc in this engine";
+        if (force) reason = "TL_UNITY_SYSTEM_ALLOCATOR";
+        else if (allocator_test) reason = "game-specific allocator test";
+        tl_log_line("unity: %s: -systemallocator, malloc for the engine's memory", reason);
+    }
     UC.intent = tl_jni_class("android/content/Intent");
     __atomic_store_n(&tl_jni_before_java, unity_intent_peek, __ATOMIC_RELEASE);
 }
