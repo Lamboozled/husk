@@ -1554,6 +1554,15 @@ static void *b_mmap(void *addr, size_t len, int prot, int flags, int fd, long of
     void *r = refuse || (force_phantom && compressed_heap_request(len) && prot == 0 && (flags & 0x20) && !(flags & 0x10)) ? MAP_FAILED
             : shifted ? shifted_file_map(addr, len, prot_filter(prot, "mmap"), df, fd, off)
             : mmap(addr, len, prot_filter(prot, "mmap"), df, (flags & 0x20) ? -1 : fd, off);
+    if (r == MAP_FAILED && errno == ENOMEM && !refuse && prot == PROT_NONE
+        && flags == 0x22 && len == ((size_t)512 << 20) - (size_t)getpagesize()
+        && unity_data_caller(__builtin_return_address(0))) {
+        /* Return the unused V8/Dart reservation before retrying Unity's full reservation. */
+        husk_release_unused_compressed_heap();
+        errno = 0;
+        r = mmap(addr, len, PROT_NONE, df, -1, off);
+        tl_log_line("mm: Unity reservation retry after releasing unused compressed heap: %p (errno=%d)", r, errno);
+    }
     if (r == MAP_FAILED && (errno == ENOMEM || force_phantom) && prot == 0 && (flags & 0x20) && !(flags & 0x10)) { r = phantom_reserve(len); if (r != MAP_FAILED) errno = 0; }
     TL_ERRNO_END();
     /* a file mapped executable (libffi's trampolines: its own library's code page, or a temporary file holding a copy): a phone
