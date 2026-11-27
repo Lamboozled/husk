@@ -63,6 +63,7 @@ bool  tl_bionic_is_system_lib(const char *soname);
 
 /* Whether the process is short of address space (an iOS app without the extended-virtual-addressing entitlement):
  * husk-tl-bionic-io.c. */
+void husk_release_unused_compressed_heap(void);
 bool  tl_mm_address_space_short(void);
 /* The address space mapped outside the shared system libraries; *guest (if given): the guest's own anonymous part. */
 size_t tl_mm_address_space_used(size_t *guest);

@@ -1353,6 +1353,10 @@ static void unity_command_line_setup(void)
     __atomic_store_n(&tl_jni_native_wrap, unity ? unity_native_wrap : NULL, __ATOMIC_RELEASE);
     if (!unity) return;
     bool allocator_test = strcmp(A.pkg, "com.IncontinentCell.MyDystopianRobotGirlfriend") == 0;
+    if (allocator_test) {
+        husk_release_unused_compressed_heap();
+        tl_log_line("mm: released any unused compressed heap reservation before Unity startup");
+    }
     bool sys = force ? atoi(force) != 0 : allocator_test || libunity_has_mimalloc();
     snprintf(UC.line, sizeof(UC.line), "%s%s%s", sys ? "-systemallocator" : "", sys && extra && extra[0] ? " " : "", extra ? extra : "");
     if (!UC.line[0]) { tl_log_line("unity: no mimalloc in this engine: its own allocators"); return; }
